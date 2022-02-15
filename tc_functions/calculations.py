@@ -232,7 +232,7 @@ def get_all_intdist(track_file):
     all_intdist = np.asarray(all_list)         #calculate the wind speed for each storm's points in buffer region
     all_intdist = all_intdist[all_intdist > 0] #remove 0 entries
     
-    if track_file.count('IBTrACS') == 1:
+    if track_file.count('IBTrACS') >= 1:
         all_intdist = all_intdist * 0.51444444444444  #convert to m/s from knots (if IBTrACS)
     
     return all_intdist
@@ -271,7 +271,7 @@ def get_max_intdist(track_file):
     max_intdist = np.asarray(max_list)         #calculate the max wind speed for each storm's points in buffer region
     max_intdist = max_intdist[max_intdist > 0] #remove 0 entries
     
-    if track_file.count('IBTrACS') == 1:
+    if track_file.count('IBTrACS') >= 1:
         max_intdist = max_intdist * 0.51444444444444 #convert to m/s if file is IBTrACS
     
     return max_intdist
@@ -315,7 +315,7 @@ def get_avg_intdist(track_file):
     avg_intdist = np.asarray(avg_list)         #calculate the avg wind speed for each storm's points in buffer region
     avg_intdist = avg_intdist[avg_intdist > 0] #remove 0 entries
     
-    if track_file.count('IBTrACS') == 1:
+    if track_file.count('IBTrACS') >= 1:
         avg_intdist = avg_intdist * 0.51444444444444 #convert to m/s if file is IBTrACS
     
     return avg_intdist
@@ -422,16 +422,18 @@ def percent_consecutive(track_file):
 
 #--------------------------------------------------------------------------------------------------------------------
 
-def get_6hr_tsdist(track_file):
+def get_6hr_tsdist(track_file='', *args):
     '''
     Calculates the translation speed distribution for a TC track file. Only considers
     consecutive TC track points, in this case those that are 6hrs apart.
     
     Parameters
     ----------
-    track_file: string
+    track_file: string, default=''
         Name of file to be analyzed.
-    
+    *args: tuple, optional
+        Tuple of time, lons, and lats arrays. ORDER (time,lons,lats).
+        
     Returns
     -------
     ts_dist: one-dimensional list
@@ -440,14 +442,19 @@ def get_6hr_tsdist(track_file):
     '''
     ts_dist = []                     #initialize ts dist list
     
-    DS = xr.open_dataset(track_file) #open track file and get arrays
-    try:
-        time = DS.time_str.values
-    except AttributeError:
-        time = DS.time_byte.values
-    lons = DS.clon.values
-    lats = DS.clat.values
-    DS.close() 
+    if track_file == '':
+        time = args[0]
+        lons = args[1]
+        lats = args[2]
+    else:
+        DS = xr.open_dataset(track_file) #open track file and get arrays
+        try:
+            time = DS.time_str.values
+        except AttributeError:
+            time = DS.time_byte.values
+        lons = DS.clon.values
+        lats = DS.clat.values
+        DS.close() 
 
     nstorms = np.shape(time)[0]   #get number of storms and times              
     ntimes = np.shape(time)[1]
@@ -474,3 +481,279 @@ def get_6hr_tsdist(track_file):
 
 #--------------------------------------------------------------------------------------------------------------------
 
+def avg_int_peryear(track_file):
+    '''
+    Function to return the distribution of average TC 
+    intensity per year.
+    
+    Parameters
+    ----------
+    track_file: string
+        Name of track file to be analyzed.
+    
+    Returns
+    -------
+    years: np.array
+        Array of all years in the track file.
+    avg_intpy_dist: np.array
+        Distribution of average intensities per year.
+    
+    '''
+    DS = xr.open_dataset(track_file) #open track file and get arrays
+    try:
+        time = DS.time_str.values
+    except AttributeError:
+        time = DS.time_byte.values
+    max_w = DS.vmax_2D.values
+    DS.close()
+    
+    nstorms = np.shape(time)[0]      #get number of storms, times, years              
+    ntimes = np.shape(time)[1]
+    
+    year_list = []                   #get list of the year of each TC
+    
+    for i in range(nstorms):
+        storm = max_w[i,0]
+        storm = storm[storm > 0]
+        if len(storm) == 0:          #skip if the length of the TC is 0
+            year_list.append(0)
+            continue
+        
+        if time[i,0].dtype == '|S19':
+            time_str = time[i,0].decode('UTF-8')
+        elif time[i,0].dtype == 'int32':
+            time_str = str(time[i,0])
+        else:
+            raise TypeError(f' type of time[i,0] is {time[i,0].dtype}')
+    
+        year = int(time_str[0:4])     
+        year_list.append(year)
+        
+    if len(year_list) != nstorms:
+        raise ValueError(f'year_list length: {len(year_list)} does not equal nstorms ({nstorms})')
+        
+    nyears = 30                #initialize number of years, years list, first year, and avg dist
+    years = []
+    first_year = year_list[0]
+    avg_intpy_dist = []
+    
+    if (first_year != 1985) and (first_year != 2021) and (first_year != 2070):  #find first year
+        year_arr = np.asarray(year_list)
+        year_arr = year_arr[year_arr > 0]
+        fy = year_arr[0]
+        if fy < 2000:
+            first_year = 1985
+        elif 2021 < fy < 2051:
+            first_year = 2021
+        else:
+            first_year = 2070
+    
+    for i in range(nyears):           #create list of all possible years
+        years.append(first_year+i)
+        
+    for i in range(nyears):           #calculate average tc intensity per year    
+        try:
+            start = year_list.index(years[i])
+        except ValueError:
+            avg = np.nan
+            avg_intpy_dist.append(avg)
+            year += 1
+            continue
+        
+        total_pts = []               #initialize list of tc track points per year
+        
+        for j in range(year_list.count(years[i])):
+            storm = max_w[start+j,:]   #set index and calculate avg intensity of the storm
+            storm = storm[storm > 0]
+            
+            for k in range(len(storm)):     
+                total_pts.append(storm[k])
+            
+        avg = np.mean(total_pts)            
+        avg_intpy_dist.append(avg)
+        
+        if np.isnan(avg) == True:
+            print(year, total_pts)
+            
+        year += 1                      #increment year
+        
+    return np.asarray(years), np.asarray(avg_intpy_dist)
+
+
+#--------------------------------------------------------------------------------------------------------------------
+
+def tc_count_peryear(track_file):
+    '''
+    Function to return the distribution of TC
+    count per year.
+    
+    Parameters
+    ----------
+    track_file: string
+        Name of track file to be analyzed.
+    
+    Returns
+    -------
+    tc_countpy_dist: np.array
+        Distribution of TC counts per year.
+    years: np.array
+        Array of all years in the track file.
+        
+    '''
+    DS = xr.open_dataset(track_file) #open track file and get arrays
+    try:
+        time = DS.time_str.values
+    except AttributeError:
+        time = DS.time_byte.values
+    max_w = DS.vmax_2D.values
+    DS.close()
+    
+    nstorms = np.shape(time)[0]      #get number of storms, times, years              
+    ntimes = np.shape(time)[1]
+    
+    year_list = []                   #get list of the year of each TC
+    
+    for i in range(nstorms):
+        storm = max_w[i,0]
+        storm = storm[storm > 0]
+        if len(storm) == 0:          #skip if the length of the TC is 0
+            year_list.append(0)
+            continue
+        
+        if time[i,0].dtype == '|S19':
+            time_str = time[i,0].decode('UTF-8')
+        elif time[i,0].dtype == 'int32':
+            time_str = str(time[i,0])
+        else:
+            raise TypeError(f' type of time[i,0] is {time[i,0].dtype}')
+    
+        year = int(time_str[0:4])     
+        year_list.append(year)
+        
+    if len(year_list) != nstorms:
+        raise ValueError(f'year_list length: {len(year_list)} does not equal nstorms ({nstorms})')
+        
+    nyears = 30                #initialize number of years, years list, first year, and avg dist
+    years = []
+    first_year = year_list[0]
+    tc_countpy_dist = []
+    
+    if (first_year != 1985) and (first_year != 2021) and (first_year != 2070):  #find first year
+        year_arr = np.asarray(year_list)
+        year_arr = year_arr[year_arr > 0]
+        fy = year_arr[0]
+        if fy < 2000:
+            first_year = 1985
+        elif 2021 < fy < 2051:
+            first_year = 2021
+        else:
+            first_year = 2070
+    
+    for i in range(nyears):           #create list of all possible years
+        years.append(first_year+i)
+    
+    for i in range(nyears):           #create distribution
+        try:
+            start = year_list.index(years[i])
+        except ValueError:
+            tc_countpy_dist.append(0)
+            continue
+        
+        tc_countpy_dist.append(year_list.count(years[i]))
+        
+    return np.asarray(years), np.asarray(tc_countpy_dist)
+
+#--------------------------------------------------------------------------------------------------------------------
+
+def avg_ts_peryear(track_file):
+    '''
+    Function to return the distribution of average TC 
+    translation speed per year.
+    
+    Parameters
+    ----------
+    track_file: string
+        Name of track file to be analyzed.
+    
+    Returns
+    -------
+    avg_tspy_dist: np.array
+        Distribution of average translation speed per year.
+    years: np.array
+        Array of all years in the track file.
+        
+    '''
+    DS = xr.open_dataset(track_file) #open track file and get arrays
+    lons = DS.clon.values
+    lats = DS.clat.values
+    try:
+        time = DS.time_str.values
+    except AttributeError:
+        time = DS.time_byte.values
+    max_w = DS.vmax_2D.values
+    DS.close()
+    
+    nstorms = np.shape(time)[0]      #get number of storms, times, years              
+    ntimes = np.shape(time)[1]
+    
+    year_list = []                   #get list of the year of each TC
+    
+    for i in range(nstorms):
+        storm = max_w[i,0]
+        storm = storm[storm > 0]
+        if len(storm) == 0:          #skip if the length of the TC is 0
+            year_list.append(0)
+            continue
+        
+        if time[i,0].dtype == '|S19':
+            time_str = time[i,0].decode('UTF-8')
+        elif time[i,0].dtype == 'int32':
+            time_str = str(time[i,0])
+        else:
+            raise TypeError(f' type of time[i,0] is {time[i,0].dtype}')
+    
+        year = int(time_str[0:4])     
+        year_list.append(year)
+        
+    if len(year_list) != nstorms:
+        raise ValueError(f'year_list length: {len(year_list)} does not equal nstorms ({nstorms})')
+        
+    nyears = 30                #initialize number of years, years list, first year, and avg dist
+    years = []
+    first_year = year_list[0]
+    avg_tspy_dist = []
+    
+    if (first_year != 1985) and (first_year != 2021) and (first_year != 2070):  #find first year
+        year_arr = np.asarray(year_list)
+        year_arr = year_arr[year_arr > 0]
+        fy = year_arr[0]
+        if fy < 2000:
+            first_year = 1985
+        elif 2021 < fy < 2051:
+            first_year = 2021
+        else:
+            first_year = 2070
+    
+    for i in range(nyears):           #create list of all possible years
+        years.append(first_year+i)
+        
+    for i in range(nyears):           #create avg translation speed per year distribution
+        try:
+            start = year_list.index(years[i])
+            end = start + year_list.count(years[i])
+        except ValueError:
+            avg = np.nan
+            avg_tspy_dist.append(avg)
+            year += 1
+            continue
+        
+        time_y = time[start:end,:]
+        lons_y = lons[start:end,:]
+        lats_y = lats[start:end,:]
+        tsdist_y = get_6hr_tsdist('', time_y, lons_y, lats_y)
+        avg = np.mean(tsdist_y)
+        avg_tspy_dist.append(avg)
+        
+    return np.asarray(years), np.asarray(avg_tspy_dist)
+
+#--------------------------------------------------------------------------------------------------------------------
